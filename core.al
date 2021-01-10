@@ -1,0 +1,8 @@
+(define nil ())
+(define not (lambda (b) (if b nil t)))
+(define or (lambda (a b) (if a t b)))
+(define and (lambda (a b) (if a b nil)))
+(define succ (lambda (n) (+ n 1)))
+(define pred (lambda (n) (- n 1)))
+(define exp (lambda (x p) (if (= 0 p) 1 (* x (exp (- p 1))))))
+(define map (lambda (f xs) (if xs (cons (f (car xs)) (map f (cdr xs))) ())))

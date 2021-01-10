@@ -1,4 +1,7 @@
 import Data.Char
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Maybe
 
 data Expr
   = Atom String
@@ -14,7 +17,7 @@ instance Show Expr where
 
 type Fn = Ctx -> [Expr] -> (Ctx, Expr)
 
-type Ctx = [(String, Expr)]
+type Ctx = Map String Expr
 
 
 
@@ -24,25 +27,31 @@ type Ctx = [(String, Expr)]
 
 rootCtx :: Ctx
 rootCtx =
-  [ ("+", numOp (+)) 
-  , ("-", numOp (-)) 
-  , ("*", numOp (*)) 
-  , ("/", numOp div) 
-  , ("if", Lambda ifFn)
-  , ("begin", Lambda beginFn)
-  , ("define", Lambda defineFn)
-  , ("lambda", Lambda lambdaFn)
-  ]
+  Map.fromList
+    [ ("+", numOpA (+)) 
+    , ("-", numOpA (-)) 
+    , ("*", numOpA (*)) 
+    , ("/", numOpA div) 
+    , ("<", numOpB (<)) 
+    , (">", numOpB (>)) 
+    , ("=", numOpB (==)) 
+    , ("if", Lambda ifFn)
+    , ("begin", Lambda beginFn)
+    , ("define", Lambda defineFn)
+    , ("lambda", Lambda lambdaFn)
+    , ("car", Lambda carFn)
+    , ("cdr", Lambda cdrFn)
+    , ("quote", Lambda quoteFn)
+    ]
 
 ifFn :: Fn
 ifFn ctx [cond, a, b] =
   case eval ctx cond of
-    (ctx', Atom "#t") -> eval ctx' a
-    (ctx', Atom "#f") -> eval ctx' b
-    _ -> error "bad if statement"
+    (ctx', List []) -> eval ctx' b
+    (ctx', _) -> eval ctx' a -- anything else is true
 
-numOp :: (Int -> Int -> Int) -> Expr
-numOp op = Lambda $
+numOpA :: (Int -> Int -> Int) -> Expr
+numOpA op = Lambda $
     \ctx [a, b] ->
       case eval ctx a of
         (ctx', Number x) ->
@@ -50,6 +59,19 @@ numOp op = Lambda $
             (ctx'', Number y) -> (ctx'', Number (op x y))
             (_, b') -> error $ "tried arith on non number '" ++ show b' ++ "'"
         (_, a') -> error $ "tried arith on non number '" ++ show a' ++ "'"
+
+numOpB :: (Int -> Int -> Bool) -> Expr
+numOpB op = Lambda $
+    \ctx [a, b] ->
+      case eval ctx a of
+        (ctx', Number x) ->
+          case eval ctx' b of
+            (ctx'', Number y) ->
+                if op x y
+                    then (ctx'', Atom "t")
+                    else (ctx'', List [])
+            (_, b') -> error $ "tried boolean on non number '" ++ show b' ++ "'"
+        (_, a') -> error $ "tried boolean on non number '" ++ show a' ++ "'"
 
 beginFn :: Fn
 beginFn ctx [] = error "empty begin"
@@ -74,10 +96,11 @@ lambdaFn defCtx ((List args):body) =
     \callCtx params ->
       let
         (callCtx', params') = evalAll callCtx params
-        argValues = zipWith (\(Atom a) p -> (a, p)) args params'
-        ctx = callCtx' ++ defCtx ++ argValues
+        argValues = Map.fromList $ zipWith (\(Atom a) p -> (a, p)) args params'
+        ctx = argValues `Map.union` callCtx' `Map.union` defCtx
+        (ctx', v) = beginFn ctx body
       in
-        beginFn ctx body
+        (ctx', v)
   )
 
 defineFn :: Fn
@@ -85,11 +108,27 @@ defineFn ctx [(Atom key), t] =
   let
     (ctx', v) = eval ctx t
   in
-    (((key, v):ctx'), v)
+    (Map.insert key v ctx', v)
 defineFn ctx _ = error "invalid variable name"
 
+carFn :: Fn
+carFn ctx [List (x:_)] = (ctx, x)
+carFn ctx _ = error "car of non list"
+
+cdrFn :: Fn
+cdrFn ctx [List (_:xs)] = (ctx, List xs)
+cdrFn ctx _ = error "cdr of non list"
+
+quoteFn :: Fn
+quoteFn ctx [x] = (ctx, x)
+
 main :: IO ()
-main = repl rootCtx
+main = 
+  do
+    core <- readFile "core.al"
+    let coreExprs = map fst $ mapMaybe parse $ lines core
+    let coreCtx = fst $ evalAll rootCtx coreExprs
+    repl coreCtx
 
 repl :: Ctx -> IO ()
 repl ctx =
@@ -100,9 +139,9 @@ repl ctx =
       Just (e, "") ->
         case eval ctx e of
           (ctx', e) -> 
-            do putStrLn (show e)
+            do putStrLn $ (show e)
                repl ctx'
-      Nothing ->
+      _ ->
         do putStrLn "ERROR: no parse!"
            repl ctx
 
@@ -124,7 +163,7 @@ number str =
     
 atom :: String -> Maybe (Expr, String)
 atom str =
-  case span (\c -> c /= '(' && c /= ' ') str of
+  case span (\c -> c /= '(' && c /= ' ' && c /= ')') str of
     ("", _) -> Nothing
     (atom, more) ->
         Just (Atom atom, more)
@@ -151,14 +190,17 @@ parseMany str =
         Nothing ->
             Just ([], str)
 
+
+
 --------------------------------------
 
 
 
 eval :: Ctx -> Expr -> (Ctx, Expr)
 
+eval ctx (Atom "t") = (ctx, Atom "t")
 eval ctx (Atom s) =
-    case lookup s ctx of
+    case Map.lookup s ctx of
       Just e -> (ctx, e)
       Nothing -> error "atom not defined"
 
@@ -169,7 +211,7 @@ eval ctx l@(Lambda _) = (ctx, l)
 eval ctx (List []) = (ctx, List [])
 
 eval ctx (List ((Atom fnName):args)) =
-    case lookup fnName ctx of
+    case Map.lookup fnName ctx of
       Just (Lambda fn) ->
         fn ctx args
       _ ->
