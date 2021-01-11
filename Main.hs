@@ -32,6 +32,7 @@ rootCtx =
     , ("-", numOpA (-)) 
     , ("*", numOpA (*)) 
     , ("/", numOpA div) 
+    , ("mod", numOpA mod) 
     , ("<", numOpB (<)) 
     , (">", numOpB (>)) 
     , ("=", numOpB (==)) 
@@ -41,6 +42,7 @@ rootCtx =
     , ("lambda", Lambda lambdaFn)
     , ("car", Lambda carFn)
     , ("cdr", Lambda cdrFn)
+    , ("cons", Lambda consFn)
     , ("quote", Lambda quoteFn)
     ]
 
@@ -49,6 +51,8 @@ ifFn ctx [cond, a, b] =
   case eval ctx cond of
     (ctx', List []) -> eval ctx' b
     (ctx', _) -> eval ctx' a -- anything else is true
+ifFn ctx _ =
+  error "if takes 3 arguments"
 
 numOpA :: (Int -> Int -> Int) -> Expr
 numOpA op = Lambda $
@@ -80,15 +84,6 @@ beginFn ctx (e:es) =
   case eval ctx e of
     (ctx', _) -> beginFn ctx' es
   
-
-evalAll :: Ctx -> [Expr] -> (Ctx, [Expr])
-evalAll ctx [] = (ctx, [])
-evalAll ctx (e:es) =
-  case eval ctx e of
-    (ctx', v) -> 
-      let (final, vs) = evalAll ctx' es
-      in (final, v:vs)
-
 lambdaFn :: Fn
 lambdaFn defCtx ((List args):body) =
   ( defCtx
@@ -98,9 +93,8 @@ lambdaFn defCtx ((List args):body) =
         (callCtx', params') = evalAll callCtx params
         argValues = Map.fromList $ zipWith (\(Atom a) p -> (a, p)) args params'
         ctx = argValues `Map.union` callCtx' `Map.union` defCtx
-        (ctx', v) = beginFn ctx body
       in
-        (ctx', v)
+        beginFn ctx body
   )
 
 defineFn :: Fn
@@ -109,18 +103,49 @@ defineFn ctx [(Atom key), t] =
     (ctx', v) = eval ctx t
   in
     (Map.insert key v ctx', v)
-defineFn ctx _ = error "invalid variable name"
+defineFn ctx _ =
+  error "invalid variable name"
 
 carFn :: Fn
-carFn ctx [List (x:_)] = (ctx, x)
-carFn ctx _ = error "car of non list"
+carFn ctx [e] =
+  case eval ctx e of
+    (ctx', List (x:_)) ->
+      (ctx', x)
+    _ ->
+      error "car of non list"
+carFn ctx _ =
+  error "car takes one argument"
 
 cdrFn :: Fn
-cdrFn ctx [List (_:xs)] = (ctx, List xs)
-cdrFn ctx _ = error "cdr of non list"
+cdrFn ctx [e] =
+  case eval ctx e of
+    (ctx', List (_:xs)) ->
+      (ctx', List xs)
+    _ ->
+      error "cdr of non list"
+cdrFn ctx _ =
+  error "cdr takes one argument"
+
+consFn :: Fn
+consFn ctx [head, tail] =
+  case eval ctx head of
+    (ctx', vHead) ->
+      case eval ctx' tail of
+        (ctx'', List vTail) ->
+          (ctx'', List (vHead:vTail))
+        _ ->
+          error "cons to non list"
+consFn ctx _ =
+  error "cons takes two arguments"
 
 quoteFn :: Fn
 quoteFn ctx [x] = (ctx, x)
+
+
+
+-----------------------
+
+
 
 main :: IO ()
 main = 
@@ -217,7 +242,16 @@ eval ctx (List ((Atom fnName):args)) =
       _ ->
         error $ "fn '" ++ fnName ++ "' not defined"
 
-eval ctx (List ((Lambda fn):args)) =
-  fn ctx args
+eval ctx (List ((Lambda fn):args)) = fn ctx args
 
 eval ctx x = error $ "idk how to eval '" ++ show x ++ "'"
+
+
+evalAll :: Ctx -> [Expr] -> (Ctx, [Expr])
+evalAll ctx [] = (ctx, [])
+evalAll ctx (e:es) =
+  case eval ctx e of
+    (ctx', v) -> 
+      let (final, vs) = evalAll ctx' es
+      in (final, v:vs)
+
