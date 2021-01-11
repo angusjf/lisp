@@ -158,17 +158,23 @@ main =
 repl :: Ctx -> IO ()
 repl ctx =
   do
-    putStr ">>> "
+    putStr "lisp> "
     inp <- getLine
     case parse inp of
       Just (e, "") ->
         case eval ctx e of
           (ctx', e) -> 
             do putStrLn $ (show e)
-               repl ctx'
+               repl (Map.insert "_" e ctx')
       _ ->
         do putStrLn "ERROR: no parse!"
            repl ctx
+
+
+
+--------------------
+
+
 
 parse :: String -> Maybe (Expr, String)
 parse str =
@@ -240,7 +246,7 @@ eval ctx (List ((Atom fnName):args)) =
       Just (Lambda fn) ->
         fn ctx args
       _ ->
-        error $ "fn '" ++ fnName ++ "' not defined"
+        error $ "function '" ++ fnName ++ "' not defined"
 
 eval ctx (List ((Lambda fn):args)) = fn ctx args
 

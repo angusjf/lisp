@@ -16,3 +16,4 @@
 (define nth (lambda (n xs) (if (zero? n) (car xs) (nth (pred n) (cdr xs)))))
 (define append (lambda (xs ys) (if xs (cons (car xs) (append (cdr xs) ys)) ys)))
 (define length (lambda (xs) (if xs (succ (length (cdr xs))) 0)))
+(define take (lambda (n xs) (if (zero? n) () (cons (car xs) (take (pred n) (cdr xs))))))
