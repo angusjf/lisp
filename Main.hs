@@ -1,318 +1,284 @@
+import Data.List
 import Data.Char
 import Debug.Trace
-import Data.Map (Map)
-import qualified Data.Map as Map
-import Data.Maybe
-import Data.List
 
-data Expr
-  = Atom String
-  | Number Int
-  | List [Expr]
-  | Lambda Fn
-
-instance Show Expr where
-  show (Atom str) = str
-  show (Number i) = show i
-  show (List exprs) = "(" ++ intercalate " " (map show exprs) ++ ")"
-  show (Lambda _) = "(fn)"
-
-type Fn = Ctx -> [Expr] -> Either String (Ctx, Expr)
-
-type Ctx = Map String Expr
-
-
-
-------------------------
-
-
-
-rootCtx :: Ctx
-rootCtx =
-  Map.fromList
-    [ ("+", numFoldA (+)) 
-    , ("-", numFoldA (-)) 
-    , ("*", numFoldA (*)) 
-    , ("/", numFoldA div) 
-    , ("mod", numOpA mod) 
-    , ("<", numOpB (<)) 
-    , (">", numOpB (>)) 
-    , ("=", numOpB (==)) 
-    , ("if", Lambda ifFn)
-    , ("begin", Lambda beginFn)
-    , ("define", Lambda defineFn)
-    , ("lambda", Lambda lambdaFn)
-    , ("car", Lambda carFn)
-    , ("cdr", Lambda cdrFn)
-    , ("cons", Lambda consFn)
-    , ("quote", Lambda quoteFn)
-    , ("eval", Lambda evalFn)
-    , ("let", Lambda letFn)
-    ]
-
-ifFn :: Fn
-ifFn ctx [cond, a, b] =
-  case eval ctx cond of
-    Right (ctx', List []) -> eval ctx' b
-    Right (ctx', _) -> eval ctx' a -- anything else is true
-    Left e -> Left e
-ifFn ctx _ =
-  Left "if takes 3 arguments"
-
-numFoldA :: (Int -> Int -> Int) -> Expr
-numFoldA op = Lambda $
-    \ctx args ->
-      case evalAll ctx args of
-        Right (ctx', argVs) ->
-            case allNumbers argVs of
-                Just ns ->
-                    Right (ctx', Number (foldl1 op ns))
-                Nothing ->
-                    Left $ "all arguments should be numbers"
-        Left e ->
-            Left e
-  where allNumbers xs = if all isNumber xs
-                          then Just $ map (\(Number n) -> n) xs
-                          else Nothing
-        isNumber (Number _) = True
-        isNumber _ = False
-
-numOpA :: (Int -> Int -> Int) -> Expr
-numOpA op = Lambda $
-    \ctx [a, b] ->
-      case eval ctx a of
-        Right (ctx', Number x) ->
-          case eval ctx' b of
-            Right (ctx'', Number y) -> Right (ctx'', Number (op x y))
-            Right (_, b') -> Left $ "tried arith on non number '" ++ show b' ++ "'"
-        Right (_, a') -> Left $ "tried arith on non number '" ++ show a' ++ "'"
-
-numOpB :: (Int -> Int -> Bool) -> Expr
-numOpB op = Lambda $
-    \ctx [a, b] ->
-      case eval ctx a of
-        Right (ctx', Number x) ->
-          case eval ctx' b of
-            Right (ctx'', Number y) ->
-                if op x y
-                    then Right (ctx'', Atom "t")
-                    else Right (ctx'', List [])
-            Right (_, b') -> Left $ "tried boolean on non number '" ++ show b' ++ "'"
-        Right (_, a') -> Left $ "tried boolean on non number '" ++ show a' ++ "'"
-
-beginFn :: Fn
-beginFn ctx [] = Left "empty begin"
-beginFn ctx [e] = eval ctx e
-beginFn ctx (e:es) =
-  case eval ctx e of
-    Right (ctx', _) -> beginFn ctx' es
-  
-lambdaFn :: Fn
-lambdaFn defCtx ((List args):body) =
-  Right $
-    ( defCtx
-    , Lambda $
-      \callCtx params ->
-        let
-          Right (callCtx', params') = evalAll callCtx params
-          argValues = Map.fromList $ zipWith (\(Atom a) p -> (a, p)) args params'
-          ctx = argValues `Map.union` callCtx' `Map.union` defCtx
-        in
-          beginFn ctx body
-    )
-
-defineFn :: Fn
-defineFn ctx [(Atom key), t] =
-  let
-    Right (ctx', v) = eval ctx t
-  in
-    Right (Map.insert key v ctx', v)
-defineFn ctx _ =
-  Left "invalid variable name"
-
-carFn :: Fn
-carFn ctx [e] =
-  case eval ctx e of
-    Right (ctx', List (x:_)) ->
-      Right (ctx', x)
-    _ ->
-      Left "car of non list"
-carFn ctx _ =
-  Left "car takes one argument"
-
-cdrFn :: Fn
-cdrFn ctx [e] =
-  case eval ctx e of
-    Right (ctx', List (_:xs)) ->
-      Right (ctx', List xs)
-    _ ->
-      Left "cdr of non list"
-cdrFn ctx _ =
-  Left "cdr takes one argument"
-
-consFn :: Fn
-consFn ctx [head, tail] =
-  case eval ctx head of
-    Right (ctx', vHead) ->
-      case eval ctx' tail of
-        Right (ctx'', List vTail) ->
-          Right (ctx'', List (vHead:vTail))
-        _ ->
-          Left "cons to non list"
-consFn ctx _ =
-  Left "cons takes two arguments"
-
-quoteFn :: Fn
-quoteFn ctx [x] = Right (ctx, x)
-quoteFn ctx _ =
-  Left "quote takes one argument"
-
-evalFn :: Fn
-evalFn ctx [e] =
-  let
-    Right (ctx', e') = eval ctx e
-  in
-    eval ctx' e'
-evalFn ctx _ =
-  Left "eval takes one argument"
-
-letFn :: Fn
-letFn ctx (List bindings:body) =
-    if all isBinding bindings then
-      let
-        bs = map (\(List [Atom a, exp]) -> (a, exp)) bindings
-      in
-        beginFn (Map.union (Map.fromList bs) ctx) body
-    else
-      Left "first argument to let should be a list of bindings"
-  where isBinding (List [Atom _, _]) = True
-        isBinding _ = False
-letFn ctx _ =
-  Left "first argument to let should be a list"
-
-
------------------------
-
-
+data Result
+    = Ok Ast
+    | ParseError
+    | EvalError
 
 main :: IO ()
-main = 
-  do
-    core <- readFile "core.lisp"
-    let coreExprs = map fst $ mapMaybe parse $ lines core
-    let Right (coreCtx, _) = evalAll rootCtx coreExprs
-    repl coreCtx
+main = do line <- readFile "core.lisp"
+          let (env, msg) = exe [] line
+          loop env
 
-repl :: Ctx -> IO ()
-repl ctx =
-  do
-    putStr "lisp> "
-    inp <- getLine
-    case inp of
-      ":q" -> return ()
-      ":ctx" -> putStrLn (show ctx) >> repl ctx
-      _ ->
-        case parse inp of
-          Just (e, "") ->
-            case eval ctx e of
-              Right (ctx', e) -> 
-                do putStrLn (show e)
-                   repl (Map.insert "_" e ctx')
-              Left e -> 
-                do putStrLn $ "ERROR: " ++ e
-                   repl ctx
-          _ ->
-            do putStrLn "ERROR: no parse!"
-               repl ctx
+loop :: Env -> IO ()
+loop env =
+    do putStr "lisp> "
+       line <- getLine
+       let (env', msg) = exe env line
+       putStrLn msg
+       loop env'
 
+exe :: Env -> String -> (Env, String)
+exe env code = 
+    case (parse . tokenise) code of
+        Just ast ->
+            case eval env ast of
+                (env', out) ->
+                    (env', "=> " ++ show out)
+        Nothing ->
+                (env, "parse error")
 
+-----------------{{{
 
---------------------
+data Token
+    = Open
+    | Close
+    | Dot
+    | Other String
 
+instance Show Token where
+    show Open = "("
+    show Close = ")"
+    show Dot = "."
+    show (Other x) = show x
 
-
-parse :: String -> Maybe (Expr, String)
-parse str =
-  case number str of
-    Just a -> Just a
-    Nothing ->
-        case atom str of
-            Just a -> Just a
-            Nothing -> list str
+tokenise :: String -> [Token]
+tokenise code = map toToken $ words san
+    where san = replace "(" " ( " $
+                replace ")" " ) " $
+                replace "\n" "" $
+                replace "." " . " code
     
-number :: String -> Maybe (Expr, String)
-number str =
-  case span isDigit str of
-    ("", _) -> Nothing
-    (n, more) ->
-        Just (Number (read n), more)
-    
-atom :: String -> Maybe (Expr, String)
-atom str =
-  case span (\c -> c /= '(' && c /= ' ' && c /= ')') str of
-    ("", _) -> Nothing
-    (atom, more) ->
-        Just (Atom atom, more)
+replace :: String -> String -> String -> String
+replace find repl "" = ""
+replace find repl str =
+    if find `isPrefixOf` str
+        then repl ++ (replace find repl (drop (length find) str))
+        else (head str) : replace find repl (tail str)
 
-list :: String -> Maybe (Expr, String)
-list ('(':str) =
-  case parseMany str of
-    Just (some, ')':moreStr) -> Just (List some, moreStr)
-    _ -> Nothing
+toToken :: String -> Token
+toToken "(" = Open
+toToken "." = Dot
+toToken ")" = Close
+toToken  x  = Other x
+
+-----------------}}}
+
+data Ast
+    = Atom String
+    | Number Int
+    | Cons Ast Ast
+    | Nil
+    | Lambda Ast Ast
+    | T deriving (Eq)--, Show)
+
+instance Show Ast where
+    show (Atom str) = str
+    show (Number n) = show n
+    show Nil = "()"
+    show T = "t"
+    show (Lambda args body) = "(#lambda)"
+    show list@(Cons a b) =
+        "(" ++ ( case well_formed list of
+                   Just contents -> intercalate " " $ map show contents
+                   Nothing -> show a ++ " . " ++ show b
+        ) ++ ")"
+
+-----------------{{{
+
+parse :: [Token] -> Maybe Ast
+parse tokens =
+    case root tokens of
+        Just (ast, []) -> Just ast
+        _ -> Nothing
+
+root :: [Token] -> Maybe (Ast, [Token])
+root ts =
+    case list ts of
+        Just x -> Just x
+        Nothing ->
+            case cons ts of
+                Just x -> Just x
+                Nothing ->
+                    non_cons ts
+
+list (Open:more) = list_end more
 list _ = Nothing
 
-parseMany :: String -> Maybe ([Expr], String)
-parseMany str =
-    case parse str of
-        Just (x, more) ->
-          case more of
-            ' ':afterSpace ->
-              let
-                Just (xs, after) = parseMany afterSpace
-              in
-                Just (x:xs, after)
-            _ ->
-              Just ([x], more)
-        Nothing ->
-            Just ([], str)
+list_end (Close:more) = Just (Nil, more)
+list_end [] = Nothing
+list_end more =
+    case root more of
+        Nothing -> Nothing
+        Just (ast1, even_more) ->
+            case list_end even_more of
+                Nothing -> Nothing
+                Just (ast2, even_even_more) ->
+                    Just (Cons ast1 ast2, even_even_more)
 
+cons (Open:more) =
+    case root more of
+        Just (ast1, Dot:even_more) ->
+            case root even_more of
+                Just (ast2, Close:even_even_more) ->
+                    Just (Cons ast1 ast2, even_even_more)
+                _ -> Nothing
+        _ -> Nothing
+cons _ = Nothing
 
+non_cons ts =
+    case ts of
+        Other s : more ->
+            Just
+                ( if all isNumber s then Number (read s)
+                  else if s == "t" then T
+                  else Atom s
+                , more
+                )
+        _ ->
+            Nothing
 
---------------------------------------
+-----------------}}}
 
+type Env = [(String, Ast)]
 
+eval :: Env -> Ast -> (Env, Ast)
 
-eval :: Ctx -> Expr -> Either String (Ctx, Expr)
+eval env (Number int) = (env, Number int)
 
-eval ctx (Atom "t") = Right (ctx, Atom "t")
-eval ctx (Atom s) =
-    case Map.lookup s ctx of
-      Just e -> Right (ctx, e)
-      Nothing -> Left "atom not defined"
+eval env Nil = (env, Nil)
 
-eval ctx (Number i) = Right (ctx, Number i)
+eval env T = trace "!" (env, T)
 
-eval ctx l@(Lambda _) = Right (ctx, l)
+eval env (Atom string) =
+    case lookup string env of
+        Just val -> (env, val)
+        Nothing -> error ("undefined " ++ string)
 
-eval ctx (List []) = Right (ctx, List [])
+eval env l@(Lambda _ _) = (env, l)
 
-eval ctx (List ((Atom fnName):args)) =
-    case Map.lookup fnName ctx of
-      Just (Lambda fn) ->
-        fn ctx args
-      _ ->
-        Left $ "function '" ++ fnName ++ "' not defined"
+eval env (Cons (Lambda args body) tail) =
+    let
+        Just args' = well_formed args
+        Just tail' = well_formed tail
+    in
+        eval env (substitute args' tail' body)
 
-eval ctx (List ((Lambda fn):args)) = fn ctx args
+eval env (Cons head@(Cons _ _) tail) = eval env' (Cons head' tail)
+    where (env', head') = eval env head 
 
-eval ctx x = Left $ "idk how to eval '" ++ show x ++ "'"
+--------------
 
+eval env (Cons (Atom "+") tail) = (env', Number (foldl1 (+) nums))
+    where Just vs = well_formed tail
+          (env', vs') = eval_all env vs
+          nums = map (\(Number n) -> n) vs'
 
-evalAll :: Ctx -> [Expr] -> Either String (Ctx, [Expr])
-evalAll ctx [] = Right (ctx, [])
-evalAll ctx (e:es) =
-  case eval ctx e of
-    Right (ctx', v) -> 
-      let Right (final, vs) = evalAll ctx' es
-      in Right (final, v:vs)
+eval env (Cons (Atom "-") tail) = (env', Number (foldl1 (-) nums))
+    where Just vs = well_formed tail
+          (env', vs') = eval_all env vs
+          nums = map (\(Number n) -> n) vs'
 
+eval env (Cons (Atom "*") tail) = (env', Number (foldl1 (*) nums))
+    where Just vs = well_formed tail
+          (env', vs') = eval_all env vs
+          nums = map (\(Number n) -> n) vs'
+
+eval env (Cons (Atom "/") tail) = (env', Number (foldl1 div nums))
+    where Just vs = well_formed tail
+          (env', vs') = eval_all env vs
+          nums = map (\(Number n) -> n) vs'
+
+eval env (Cons (Atom "mod") tail) = (env', Number (foldl1 mod nums))
+    where Just vs = well_formed tail
+          (env', vs') = eval_all env vs
+          nums = map (\(Number n) -> n) vs'
+
+eval env (Cons (Atom "=") tail) = (env'', if x == y then T else Nil)
+    where Cons a (Cons b Nil) = tail
+          (env' , Number x) = eval env a
+          (env'', Number y) = eval env' b
+
+eval env (Cons (Atom "if") tail) =
+    if cond' == Nil then eval env' false
+                    else eval env' true
+    where Cons cond (Cons true (Cons false Nil)) = tail
+          (env', cond') = eval env cond
+
+eval env (Cons (Atom "quote") tail) = (env, inner)
+    where Cons inner Nil = tail
+
+eval env (Cons (Atom "car") args) = (env', head)
+    where Cons arg Nil = args
+          (env', arg') = eval env arg
+          Cons head _ = arg'
+
+eval env (Cons (Atom "cdr") args) = (env', tail)
+    where Cons arg Nil = args
+          (env', arg') = eval env arg
+          Cons _ tail = arg'
+
+eval env (Cons (Atom "cons") tail) = (env'', Cons a' b')
+    where Cons a (Cons b Nil) = tail
+          (env' , a') = eval env a
+          (env'', b') = eval env' b
+
+eval env (Cons (Atom "list") tail) = (env', to_cons evald)
+    where Just all = well_formed tail
+          (env', evald) = eval_all env all
+
+eval env (Cons (Atom "begin") tail) = (env', last evald)
+    where Just all = well_formed tail
+          (env', evald) = eval_all env all
+
+eval env (Cons (Atom "def") tail) = ((name, v') : env', Nil)
+    where Cons (Atom name) (Cons v Nil) = tail
+          (env', v') = eval env v
+
+eval env (Cons (Atom "fn") tail) = (env, closure)
+    where Cons args (Cons body Nil) = tail
+          closure = Lambda args body
+
+eval env (Cons (Atom fn_name) tail) =
+    case lookup fn_name env of
+        Just x -> eval env (Cons x tail)
+        Nothing -> error ("function " ++ fn_name ++ " undefined")
+
+-----------
+
+eval env z = error $ "nomatch " ++ show z
+
+-----------
+
+eval_all :: Env -> [Ast] -> (Env, [Ast])
+eval_all env [] = (env, [])
+eval_all env (v:vs) = (env'', v':vs')
+    where (env', v') = eval env v
+          (env'', vs') = eval_all env' vs
+
+substitute :: [Ast] -> [Ast] -> Ast -> Ast
+substitute args tail body = sub (zip names tail) body
+    where names = map (\(Atom s) -> s) args
+
+sub :: [(String, Ast)] -> Ast -> Ast
+sub dict (Atom s) =
+    case lookup s dict of
+        Just v -> v
+        Nothing -> Atom s
+sub _ (Number n) = Number n
+sub dict (Cons ast1 ast2) =
+    Cons (sub dict ast1) (sub dict ast2)
+sub dict (Lambda args body) = error "TODO"
+sub _ Nil = Nil
+sub _ T = T
+
+well_formed :: Ast -> Maybe [Ast]
+well_formed Nil = Just []
+well_formed (Cons a b) = well_formed b >>= \x -> Just (a : x)
+well_formed _ = Nothing
+
+to_cons :: [Ast] -> Ast
+to_cons [] = Nil
+to_cons (x:xs) = Cons x (to_cons xs)
