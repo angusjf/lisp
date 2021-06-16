@@ -3,6 +3,7 @@ import Debug.Trace
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.List
 
 data Expr
   = Atom String
@@ -13,7 +14,7 @@ data Expr
 instance Show Expr where
   show (Atom str) = str
   show (Number i) = show i
-  show (List exprs) = show exprs
+  show (List exprs) = "(" ++ intercalate " " (map show exprs) ++ ")"
   show (Lambda _) = "(fn)"
 
 type Fn = Ctx -> [Expr] -> Either String (Ctx, Expr)
@@ -46,6 +47,7 @@ rootCtx =
     , ("cons", Lambda consFn)
     , ("quote", Lambda quoteFn)
     , ("eval", Lambda evalFn)
+    , ("let", Lambda letFn)
     ]
 
 ifFn :: Fn
@@ -173,6 +175,20 @@ evalFn ctx [e] =
     eval ctx' e'
 evalFn ctx _ =
   Left "eval takes one argument"
+
+letFn :: Fn
+letFn ctx (List bindings:body) =
+    if all isBinding bindings then
+      let
+        bs = map (\(List [Atom a, exp]) -> (a, exp)) bindings
+      in
+        beginFn (Map.union (Map.fromList bs) ctx) body
+    else
+      Left "first argument to let should be a list of bindings"
+  where isBinding (List [Atom _, _]) = True
+        isBinding _ = False
+letFn ctx _ =
+  Left "first argument to let should be a list"
 
 
 -----------------------

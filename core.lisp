@@ -8,6 +8,7 @@
 (define zero? (lambda (n) (= n 0)))
 (define even? (lambda (n) (= (mod n 2) 0)))
 (define odd? (lambda (n) (= (mod n 2) 1)))
+(define nil? (lambda (xs) (if xs nil t)))
 (define exp (lambda (x p) (if (= 0 p) 1 (* x (exp x (- p 1))))))
 (define map (lambda (f xs) (if xs (cons (f (car xs)) (map f (cdr xs))) ())))
 (define filter (lambda (f xs) (if xs (if (f (car xs)) (cons (car xs) (filter f (cdr xs))) (filter f (cdr xs))) ())))
