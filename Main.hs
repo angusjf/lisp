@@ -351,7 +351,12 @@ _cond env tail =
                     Left x
 
 _let env tail =
-    error "unimp"
+    let
+        Cons assigns (Cons body Nil) = tail
+        Just assigns' = well_formed assigns
+        pairs = map (\(Cons (Atom name) (Cons v Nil)) -> (name, v)) assigns'
+    in
+        eval (pairs ++ env) body
 
 _quote env tail = Right (env, inner)
     where Cons inner Nil = tail
