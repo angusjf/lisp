@@ -46,4 +46,9 @@
                 (+ (fib (- x 1)) (fib (- x 2))))))
   (def sum
         (fn (xs) (apply + xs)))
+  (def reduce
+        (fn (f unit xs) 
+            (if xs
+              (f (car xs) (reduce f unit (cdr xs)))
+              unit)))
 )

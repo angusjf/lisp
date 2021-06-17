@@ -63,12 +63,14 @@ data Token
     = Open
     | Close
     | Dot
+    | Quote
     | Other String
 
 instance Show Token where
     show Open = "("
     show Close = ")"
     show Dot = "."
+    show Quote = "'"
     show (Other x) = show x
 
 tokenise :: String -> [Token]
@@ -76,6 +78,7 @@ tokenise code = map toToken $ words san
     where san = replace "(" " ( " $
                 replace ")" " ) " $
                 replace "\n" "" $
+                replace "'" " ' " $
                 replace "." " . " code
     
 replace :: String -> String -> String -> String
@@ -89,6 +92,7 @@ toToken :: String -> Token
 toToken "(" = Open
 toToken "." = Dot
 toToken ")" = Close
+toToken "'" = Quote
 toToken  x  = Other x
 
 -----------------}}}
@@ -106,7 +110,8 @@ instance Show Ast where
     show (Number n) = show n
     show Nil = "()"
     show T = "t"
-    show (Lambda args body) = "#lambda"
+    --show (Lambda _ _) = "#lambda"
+    show (Lambda args body) = "(\\ " ++ show args ++ " " ++ show body ++ ")"
     show list@(Cons a b) =
         "(" ++ ( case well_formed list of
                    Just contents -> intercalate " " $ map show contents
@@ -123,13 +128,24 @@ parse tokens =
 
 root :: [Token] -> Maybe (Ast, [Token])
 root ts =
-    case list ts of
+    case quote ts of
         Just x -> Just x
         Nothing ->
-            case cons ts of
+            case list ts of
                 Just x -> Just x
                 Nothing ->
-                    non_cons ts
+                    case cons ts of
+                        Just x -> Just x
+                        Nothing ->
+                            non_cons ts
+
+quote (Quote:more) =
+    case root more of
+        Just (ast, even_more) ->
+            Just (Cons (Atom "quote") (Cons ast Nil), even_more)
+        Nothing ->
+            Nothing
+quote _ = Nothing
 
 list (Open:more) = list_end more
 list _ = Nothing
@@ -331,6 +347,8 @@ sub dict (Atom s) =
 sub _ (Number n) = Number n
 sub dict (Cons (Atom "quote") ast) =
     Cons (Atom "quote") ast
+sub dict (Cons (Atom "fn") (Cons args body)) =
+    Cons (Atom "fn") (Cons args (sub dict body))
 sub dict (Cons ast1 ast2) =
     Cons (sub dict ast1) (sub dict ast2)
 sub dict (Lambda args body) =
