@@ -44,4 +44,6 @@
            (if (<= x 1)
                 1
                 (+ (fib (- x 1)) (fib (- x 2))))))
+  (def sum
+        (fn (xs) (apply + xs)))
 )

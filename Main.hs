@@ -44,7 +44,7 @@ exe env code =
                         Unbound name ->
                             "unbound symbol '" ++ name ++ "'"
                         UndefinedFunction code ->
-                            "function " ++ code ++ "not defined"
+                            "function " ++ code ++ " not defined"
                         Unimplemented code ->
                             "I can't eval " ++ code
                         WrongArgNumber need given ->
@@ -329,9 +329,13 @@ sub dict (Atom s) =
         Just v -> v
         Nothing -> Atom s
 sub _ (Number n) = Number n
+sub dict (Cons (Atom "quote") ast) =
+    Cons (Atom "quote") ast
 sub dict (Cons ast1 ast2) =
     Cons (sub dict ast1) (sub dict ast2)
-sub dict (Lambda args body) = error "TODO"
+sub dict (Lambda args body) =
+    -- TODO don't sub if dict & args intersect
+    Lambda args (sub dict body)
 sub _ Nil = Nil
 sub _ T = T
 
