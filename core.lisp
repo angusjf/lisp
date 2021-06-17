@@ -1,6 +1,6 @@
 (begin
   (def pi 3)
-  (def nats (quote (1 2 3 4 5 6 7 9 10)))
+  (def nats (quote (1 2 3 4 5 6 7 8 9 10)))
   (def id (fn (a) a))
   (def nil ())
   (def not (fn (b) (if b nil t)))
@@ -36,4 +36,12 @@
   (def take
         (fn (n xs)
             (if (zero? n) () (cons (car xs) (take (pred n) (cdr xs))))))
+  (def <= (fn (a b) (or (< a b) (= a b))))
+  (def > (fn (a b) (not (<= a b))))
+  (def >= (fn (a b) (or (> a b) (= a b))))
+  (def fib
+        (fn (x)
+           (if (<= x 1)
+                1
+                (+ (fib (- x 1)) (fib (- x 2))))))
 )
