@@ -202,9 +202,12 @@ eval env Nil = Right (env, Nil)
 eval env T = Right (env, T)
 
 eval env (Atom name) =
-    case lookup name env of
-        Just val -> Right (env, val)
-        Nothing -> Left (Unbound name)
+    case lookup name built_in of
+        Just val -> Right (env, (Atom name))
+        Nothing ->
+            case lookup name env of
+                Just val -> Right (env, val)
+                Nothing -> Left (Unbound name)
 
 eval env l@(Lambda _ _) = Right (env, l)
 
@@ -222,107 +225,14 @@ eval env (Cons head@(Cons _ _) tail) =
     do (env', head') <- eval env head 
        eval env' (Cons head' tail)
 
---------------
-
-eval env (Cons (Atom "+") tail) =
-    do let Just vs = well_formed tail
-       (env', vs') <- eval_all env vs
-       let nums = map (\(Number n) -> n) vs'
-       return (env', Number (foldl1 (+) nums))
-
-eval env (Cons (Atom "-") tail) =
-    do let Just vs = well_formed tail
-       (env', vs') <- eval_all env vs
-       let nums = map (\(Number n) -> n) vs'
-       return (env', Number (foldl1 (-) nums))
-
-eval env (Cons (Atom "*") tail) =
-    do let Just vs = well_formed tail
-       (env', vs') <- eval_all env vs
-       let nums = map (\(Number n) -> n) vs'
-       return (env', Number (foldl1 (*) nums))
-
-eval env (Cons (Atom "/") tail) =
-    do let Just vs = well_formed tail
-       (env', vs') <- eval_all env vs
-       let nums = map (\(Number n) -> n) vs'
-       return (env', Number (foldl1 div nums))
-
-eval env (Cons (Atom "mod") tail) =
-    do let Just vs = well_formed tail
-       (env', vs') <- eval_all env vs
-       let nums = map (\(Number n) -> n) vs'
-       return (env', Number (foldl1 mod nums))
-
-eval env (Cons (Atom "=") tail) =
-    do let Cons a (Cons b Nil) = tail
-       (env' , Number x) <- eval env a
-       (env'', Number y) <- eval env' b
-       return (env'', if x == y then T else Nil)
-
-eval env (Cons (Atom "<") tail) =
-    do let Cons a (Cons b Nil) = tail
-       (env' , Number x) <- eval env a
-       (env'', Number y) <- eval env' b
-       return (env'', if x < y then T else Nil)
-
-eval env (Cons (Atom "if") tail) =
-    do let Cons cond (Cons true (Cons false Nil)) = tail
-       (env', cond') <- eval env cond
-       if cond' == Nil then eval env' false
-                       else eval env' true
-
-eval env (Cons (Atom "quote") tail) = Right (env, inner)
-    where Cons inner Nil = tail
-
-eval env (Cons (Atom "car") args) =
-    do let Cons arg Nil = args
-       (env', arg') <- eval env arg
-       let Cons head _ = arg'
-       return (env', head)
-
-eval env (Cons (Atom "cdr") args) =
-    do let Cons arg Nil = args
-       (env', arg') <- eval env arg
-       let Cons _ tail = arg'
-       return (env', tail)
-
-eval env (Cons (Atom "cons") tail) =
-    do let Cons a (Cons b Nil) = tail
-       (env' , a') <- eval env a
-       (env'', b') <- eval env' b
-       return (env'', Cons a' b')
-
-eval env (Cons (Atom "list") tail) =
-    do let Just all = well_formed tail
-       (env', evald) <- eval_all env all
-       return (env', to_cons evald)
-
-eval env (Cons (Atom "begin") tail) =
-    do let Just all = well_formed tail
-       (env', evald) <- eval_all env all
-       return (env', last evald)
-
-eval env (Cons (Atom "def") tail) =
-    do let Cons (Atom name) (Cons v Nil) = tail
-       (env', v') <- eval env v
-       return ((name, v') : env', Nil)
-
-eval env (Cons (Atom "fn") tail) = Right (env, closure)
-    where Cons args (Cons body Nil) = tail
-          closure = Lambda args body
-
-eval env (Cons (Atom "apply") tail) =
-    do let Cons fn_name (Cons args Nil) = tail
-       (env', args') <- eval env args
-       eval env' (Cons fn_name args')
-
 eval env (Cons (Atom fn_name) tail) =
-    case lookup fn_name env of
-        Just x -> eval env (Cons x tail)
-        Nothing -> Left (UndefinedFunction fn_name)
-
------------
+    case lookup fn_name built_in of
+        Just fn ->
+            fn env tail
+        Nothing ->
+            case lookup fn_name env of
+                Just x -> eval env (Cons x tail)
+                Nothing -> Left (UndefinedFunction fn_name)
 
 eval env z = Left (Unimplemented (show z))
 
@@ -365,3 +275,127 @@ well_formed _ = Nothing
 to_cons :: [Ast] -> Ast
 to_cons [] = Nil
 to_cons (x:xs) = Cons x (to_cons xs)
+
+-----------------{{{
+
+built_in =
+    [ ("+", _add)
+    , ("-", _sub)
+    , ("*", _mul)
+    , ("/", _div)
+    , ("mod", _mod)
+    , ("=", _eq)
+    , ("<", _lt)
+    , ("eval", _eval)
+    , ("if", _if)
+    , ("cond", _cond)
+    , ("let", _let)
+    , ("quote", _quote)
+    , ("car", _car)
+    , ("cdr", _cdr)
+    , ("cons", _cons)
+    , ("list", _list)
+    , ("begin", _begin)
+    , ("def", _def)
+    , ("fn", _fn)
+    , ("apply", _apply)
+    ]
+
+arith fn env tail =
+    do let Just vs = well_formed tail
+       (env', vs') <- eval_all env vs
+       let nums = map (\(Number n) -> n) vs'
+       return (env', Number (foldl1 fn nums))
+
+_add = arith (+)
+
+_sub = arith (-)
+
+_mul = arith (*)
+
+_div = arith div
+
+_mod = arith mod
+
+_eq env tail =
+    do let Cons a (Cons b Nil) = tail
+       (env' , Number x) <- eval env a
+       (env'', Number y) <- eval env' b
+       return (env'', if x == y then T else Nil)
+
+_lt env tail =
+    do let Cons a (Cons b Nil) = tail
+       (env' , Number x) <- eval env a
+       (env'', Number y) <- eval env' b
+       return (env'', if x < y then T else Nil)
+
+_eval env tail = eval env exp
+    where (Cons exp Nil) = tail
+
+_if env tail =
+    do let Cons cond (Cons true (Cons false Nil)) = tail
+       (env', cond') <- eval env cond
+       if cond' == Nil then eval env' false
+                       else eval env' true
+
+_cond env tail =
+    case tail of
+        Nil -> Right (env, Nil)
+        (Cons (Cons cond (Cons ret Nil)) more) ->
+            case eval env cond of
+                Right (env', cond') ->
+                    case cond' of
+                        Nil -> _cond env' more
+                        _ -> eval env' ret
+                Left x ->
+                    Left x
+
+_let env tail =
+    error "unimp"
+
+_quote env tail = Right (env, inner)
+    where Cons inner Nil = tail
+
+_car env args =
+    do let Cons arg Nil = args
+       (env', arg') <- eval env arg
+       let Cons head _ = arg'
+       return (env', head)
+
+_cdr env args =
+    do let Cons arg Nil = args
+       (env', arg') <- eval env arg
+       let Cons _ tail = arg'
+       return (env', tail)
+
+_cons env tail =
+    do let Cons a (Cons b Nil) = tail
+       (env' , a') <- eval env a
+       (env'', b') <- eval env' b
+       return (env'', Cons a' b')
+
+_list env tail =
+    do let Just all = well_formed tail
+       (env', evald) <- eval_all env all
+       return (env', to_cons evald)
+
+_begin env tail =
+    do let Just all = well_formed tail
+       (env', evald) <- eval_all env all
+       return (env', last evald)
+
+_def env tail =
+    do let Cons (Atom name) (Cons v Nil) = tail
+       (env', v') <- eval env v
+       return ((name, v') : env', Nil)
+
+_fn env tail = Right (env, closure)
+    where Cons args (Cons body Nil) = tail
+          closure = Lambda args body
+
+_apply env tail =
+    do let Cons fn_name (Cons args Nil) = tail
+       (env', args') <- eval env args
+       eval env' (Cons fn_name args')
+
+----------------}}}

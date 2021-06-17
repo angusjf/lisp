@@ -51,4 +51,10 @@
             (if xs
               (f (car xs) (reduce f unit (cdr xs)))
               unit)))
+  (def reverse (fn (xs) (rev-helper xs ())))
+  (def rev-helper
+        (fn (xs acc)
+            (if xs
+              (rev-helper (cdr xs) (cons (car xs) acc))
+              acc)))
 )
